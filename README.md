@@ -1,144 +1,109 @@
-import csv
-import io
-from markdownify import markdownify as md
-import os
+# html-to-markdown-csv
 
+> Convert HTML product descriptions in CSV files to clean Markdown — with mojibake encoding repair, multi-column support, and guaranteed row preservation.
 
-def count_csv_rows(file_path, encoding='windows-1252'):
-    """
-    Count rows by splitting on CRLF at the raw byte level, then removing only
-    the trailing empty line (EOF). This preserves intentional empty/blank rows
-    and is not fooled by bare \r inside unquoted field content.
-    """
-    if not os.path.exists(file_path):
-        return 0, "File not found"
-    try:
-        with open(file_path, 'rb') as f:
-            content = f.read()
-        lines = content.split(b'\r\n')
-        if lines and lines[-1] == b'':
-            lines = lines[:-1]  # strip trailing EOF empty line only
-        return len(lines), "OK"
-    except Exception as e:
-        return 0, f"Error: {e}"
+---
 
+## ✨ Features
 
-def fix_mojibake(text, passes=2):
-    """
-    Fix double-encoded (mojibake) text where UTF-8 bytes were misread as cp1252.
-    e.g. 'Ã¢â‚¬Ëœ' -> '\u2018' (left single quote), 'Ã‚Â°' -> '°'
-    Applies up to `passes` rounds since some text is double-mangled.
-    Clean ASCII text passes through unchanged.
-    """
-    for _ in range(passes):
-        try:
-            fixed = text.encode('cp1252').decode('utf-8')
-            if fixed == text:
-                break  # no change, already clean
-            text = fixed
-        except (UnicodeEncodeError, UnicodeDecodeError):
-            break  # can't fix further, return what we have
-    return text
+- 🔄 **HTML → Markdown** conversion via [`markdownify`](https://github.com/matthewwithanm/python-markdownify)
+- 🛠️ **Mojibake repair** — automatically fixes double-encoded text (`Ã‚Â°` → `°`, `Ã¢â‚¬Ëœ` → `'`) caused by UTF-8 bytes misread as cp1252
+- 📋 **Multi-column support** — convert one or many HTML columns in a single pass
+- 🔢 **Exact row preservation** — blank/empty rows are kept exactly as-is (no silent skipping)
+- 📦 **Input:** Windows-1252 encoded CSV → **Output:** UTF-8 CSV with CRLF line endings
 
+---
 
-def convert_html_csv_to_md(input_file, output_file, column_names):
-    """
-    Reads a CSV, converts specified columns' HTML to Markdown, fixes encoding
-    mojibake, and writes a new CSV. Preserves ALL rows including blank rows.
+## 🚀 Quick Start
 
-    Args:
-        input_file:   Path to input CSV (Windows-1252 encoded)
-        output_file:  Path to output CSV (UTF-8)
-        column_names: List of column names to convert (e.g. ['Description', 'short_description'])
-    """
-    if isinstance(column_names, str):
-        column_names = [column_names]  # allow passing a single string too
+### 1. Install dependencies
 
-    input_rows, input_status = count_csv_rows(input_file, encoding='windows-1252')
-    print(f"📊 INPUT CSV ('{input_file}') - Rows: {input_rows} (Status: {input_status})")
-    print(f"🎯 Target columns: {column_names}")
+```bash
+pip install markdownify
+```
 
-    try:
-        with open(input_file, 'rb') as f:
-            raw_content = f.read()
+### 2. Configure the script
 
-        lines = raw_content.split(b'\r\n')
-        if lines and lines[-1] == b'':
-            lines = lines[:-1]  # remove trailing EOF newline only
+Edit the bottom of `convert.py`:
 
-        out_lines = []
-        col_indices = {}  # {column_name: index}
+```python
+INPUT_CSV    = 'prod_desc.csv'           # your input file
+OUTPUT_CSV   = 'products_markdown.csv'   # where to write output
+TARGET_COLUMNS = ['Description']         # one or more HTML column names
+```
 
-        for i, line_bytes in enumerate(lines):
-            # Preserve empty rows exactly as-is
-            if line_bytes == b'':
-                out_lines.append(b'')
-                continue
+For **multiple columns**:
 
-            line_str = line_bytes.decode('windows-1252')
+```python
+TARGET_COLUMNS = ['short_description', 'long_description', 'Description']
+```
 
-            # Parse this single line as a CSV row
-            row = next(csv.reader(io.StringIO(line_str)))
+### 3. Run
 
-            if i == 0:
-                # Header row — find all target column indices
-                for col in column_names:
-                    if col not in row:
-                        print(f"⚠️  Warning: Column '{col}' not found in CSV. Available: {row}")
-                    else:
-                        col_indices[col] = row.index(col)
-                out_lines.append(line_bytes)  # write header unchanged
-                continue
+```bash
+python convert.py
+```
 
-            if not col_indices:
-                print("Error: None of the target columns were found. Aborting.")
-                return
+**Example output:**
 
-            # Process each target column
-            for col, idx in col_indices.items():
-                if idx < len(row):
-                    html_content = row[idx]
-                    if html_content.strip():
-                        # Step 1: Fix mojibake encoding corruption
-                        html_content = fix_mojibake(html_content)
-                        # Step 2: Convert HTML -> Markdown
-                        converted = md(html_content, heading_style="ATX").strip()
-                        # Step 3: Normalize line endings (bare \r corrupts CSV rows)
-                        converted = converted.replace('\r\n', '\n').replace('\r', '\n')
-                        row[idx] = converted
+```
+📊 INPUT CSV ('prod_desc.csv') - Rows: 460 (Status: OK)
+🎯 Target columns: ['Description', 'short_description']
+✅ CONVERSION COMPLETE!
+📊 OUTPUT CSV ('products_markdown.csv') - Rows: 460 (Status: OK)
+🔍 ROW MATCH: ✅ PERFECT
+   Input: 460 rows | Output: 460 rows
+```
 
-            # Re-encode the row as a fully-quoted CSV line in UTF-8
-            buf = io.StringIO()
-            writer = csv.writer(buf, quoting=csv.QUOTE_ALL)
-            writer.writerow(row)
-            encoded_line = buf.getvalue().rstrip('\r\n').encode('utf-8')
-            out_lines.append(encoded_line)
+---
 
-        # Write output with CRLF line endings (standard for CSV)
-        with open(output_file, 'wb') as f:
-            f.write(b'\r\n'.join(out_lines) + b'\r\n')
+## 🧠 How It Works
 
-        output_rows, output_status = count_csv_rows(output_file, encoding='utf-8')
-        print(f"✅ CONVERSION COMPLETE!")
-        print(f"📊 OUTPUT CSV ('{output_file}') - Rows: {output_rows} (Status: {output_status})")
+### The Encoding Problem
 
-        match_status = '✅ PERFECT' if input_rows == output_rows else '❌ MISMATCH!'
-        print(f"🔍 ROW MATCH: {match_status}")
-        print(f"   Input: {input_rows} rows | Output: {output_rows} rows")
+Product CSVs exported from platforms like Shopify, WooCommerce, or custom ERPs often contain **mojibake** — garbled text created when UTF-8 encoded content is saved or read using the wrong encoding (cp1252/Windows-1252).
 
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        print(f"An error occurred: {e}")
+| Garbled | Fixed |
+|--------|-------|
+| `Ã‚Â°` | `°` |
+| `Ã¢â‚¬ËœVibe with vybn!Ã¢â‚¬â„¢` | `'Vibe with vybn!'` |
+| `Ã¢â‚¬â€™` | `'` |
 
+The `fix_mojibake()` function applies up to **2 passes** of `encode('cp1252').decode('utf-8')` to unwind the double-encoding. Clean ASCII text is never modified.
 
-# --- Configuration ---
-INPUT_CSV = '/mnt/user-data/uploads/prod_desc.csv'
-OUTPUT_CSV = '/mnt/user-data/outputs/products_markdown.csv'
+### The Row Count Problem
 
-# ✅ List all HTML columns you want converted — handles one or many
-TARGET_COLUMNS = ['Description']  # e.g. ['Description', 'short_description', 'long_description']
+Standard `csv.reader` with `newline=''` **overcounts rows** when unquoted fields contain bare `\r` characters (common in HTML content) — treating each `\r` as a row terminator. `csv.DictReader` silently **skips blank rows**. This script solves both by:
 
-if __name__ == "__main__":
-    os.makedirs('/mnt/user-data/outputs', exist_ok=True)
-    convert_html_csv_to_md(INPUT_CSV, OUTPUT_CSV, TARGET_COLUMNS)
+1. Splitting the raw file on `\r\n` at the **byte level** to get true logical lines
+2. Processing each line individually through `csv.reader`
+3. Writing empty lines back unchanged
+
+This guarantees **input row count == output row count**, always.
+
+---
+
+## 📁 Project Structure
+
+```
+html-to-markdown-csv/
+├── convert.py       # main script
+└── README.md
+```
+
+---
+
+## ⚙️ Requirements
+
+- Python 3.7+
+- [`markdownify`](https://pypi.org/project/markdownify/)
+
+```bash
+pip install markdownify
+```
+
+---
+
+## 📝 License
+
+MIT
